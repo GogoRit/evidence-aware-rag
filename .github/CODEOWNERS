@@ -1,0 +1,12 @@
+# Default owners for everything in the repo
+* @GogoRit
+
+# Backend
+/backend/ @GogoRit
+
+# Frontend
+/frontend/ @GogoRit
+
+# Infrastructure and config
+/Makefile @GogoRit
+/.github/ @GogoRit
