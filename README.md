@@ -84,16 +84,47 @@ evidence-aware-rag/
 
 ## Development
 
-```bash
-# Run tests
-make test
+### Makefile Targets
 
-# Run linter
-make lint
+| Command | Description |
+|---------|-------------|
+| `make backend` | Start FastAPI server on port 8000 |
+| `make frontend` | Start Streamlit UI on port 8501 |
+| `make demo` | Run E2E smoke test |
+| `make test` | Run pytest suite |
+| `make lint` | Run ruff linter |
+| `make clean` | Remove virtual environments |
 
-# Clean virtual environments
-make clean
-```
+### Developer Workflow
+
+We follow a strict branch-based workflow:
+
+1. **Create branch** from latest main:
+   ```bash
+   git checkout main && git pull
+   git checkout -b feat/my-feature
+   ```
+
+2. **Run checks** before committing:
+   ```bash
+   make test
+   make demo
+   ```
+
+3. **Commit** with conventional style:
+   ```bash
+   git commit -m "feat: add new feature"
+   ```
+
+4. **Push and open PR**:
+   ```bash
+   git push -u origin feat/my-feature
+   ```
+
+Branch prefixes: `feat/`, `fix/`, `chore/`
+Commit prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `test:`
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
 
 ## License
 
