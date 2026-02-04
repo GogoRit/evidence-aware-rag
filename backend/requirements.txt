@@ -1,0 +1,32 @@
+# Backend requirements (generated from pyproject.toml)
+# Use this for: pip install -r requirements.txt
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+python-multipart>=0.0.6
+aiofiles>=23.2.1
+httpx>=0.26.0
+
+# Vector store
+faiss-cpu>=1.7.4
+numpy>=1.26.0
+
+# Local embeddings (works offline, no API key needed)
+sentence-transformers>=2.2.0
+torch>=2.0.0
+
+# Document processing
+pypdf>=3.17.0
+python-docx>=1.1.0
+beautifulsoup4>=4.12.0
+tiktoken>=0.5.0
+
+# LLM clients (optional - only needed for generation)
+openai>=1.10.0
+anthropic>=0.18.0
+
+# Observability
+structlog>=24.1.0
+prometheus-client>=0.19.0

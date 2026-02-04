@@ -1,0 +1,33 @@
+ACME Corporation - Remote Work Policy
+Document Version: 2.1
+Effective Date: January 1, 2024
+
+1. ELIGIBILITY
+
+All full-time employees who have completed their 90-day probationary period are eligible for remote work arrangements. Contractors and part-time employees must receive explicit written approval from their department head.
+
+2. WORK HOURS AND AVAILABILITY
+
+Remote employees must maintain core working hours from 10:00 AM to 3:00 PM in their local timezone. Employees are expected to respond to messages within 2 hours during core hours. Time tracking is mandatory and must be submitted weekly through the HR portal.
+
+3. EQUIPMENT AND SECURITY
+
+The company will provide a laptop, monitor, and necessary peripherals. Employees must use the company VPN for all work-related activities. Personal devices may not be used to access confidential company data. All equipment must be returned within 5 business days of employment termination.
+
+4. COMMUNICATION REQUIREMENTS
+
+Daily standups are mandatory for all remote team members. Video must be enabled during team meetings unless bandwidth issues prevent it. Slack is the primary communication tool; response time should not exceed 4 hours during working hours.
+
+5. EXPENSE REIMBURSEMENT
+
+Remote employees may claim up to $50/month for internet expenses. One-time home office setup allowance of $500 is available upon approval. All expense claims must include receipts and be submitted within 30 days.
+
+6. PERFORMANCE EXPECTATIONS
+
+Remote employees will be evaluated using the same criteria as in-office employees. Quarterly performance reviews are mandatory. Failure to meet productivity standards may result in revocation of remote work privileges.
+
+7. TERMINATION OF REMOTE WORK ARRANGEMENT
+
+The company reserves the right to require employees to return to office with 30 days notice. Employees may voluntarily end their remote work arrangement at any time. Repeated violations of this policy will result in disciplinary action.
+
+For questions about this policy, contact hr@acme-corp.example.com
