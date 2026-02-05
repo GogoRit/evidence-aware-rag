@@ -11,6 +11,10 @@ from app.models.schemas import MetricsResponse, LatencyMetrics, CostMetrics
 from app.modules.observability.latency import get_latency_stats
 from app.modules.observability.cost import get_cost_summary
 from app.modules.observability.workspace_stats import get_workspace_aggregate_stats
+from app.modules.observability.retrieval_metrics import (
+    get_metrics_summary,
+    reset_retrieval_metrics,
+)
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -112,6 +116,31 @@ async def detailed_health() -> dict:
             "embedding_dim": settings.embedding_dim,
         },
     }
+
+
+@router.get("/retrieval")
+async def get_retrieval_metrics() -> dict:
+    """
+    Get retrieval-specific metrics including:
+    - Refusal rate and confidence distribution
+    - Entity-fact lookup rate
+    - Lexical fallback rate
+    - Document aggregation statistics
+    """
+    return get_metrics_summary()
+
+
+@router.post("/retrieval/reset")
+async def reset_retrieval_metrics_endpoint() -> dict:
+    """
+    Reset retrieval metrics counters.
+    
+    Safe for development use. In production, consider gating behind
+    an environment variable or admin authentication.
+    """
+    reset_retrieval_metrics()
+    logger.warning("Retrieval metrics reset by user")
+    return {"status": "reset", "timestamp": datetime.utcnow().isoformat()}
 
 
 @router.delete("/reset")
