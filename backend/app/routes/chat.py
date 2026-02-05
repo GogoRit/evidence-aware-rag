@@ -17,6 +17,7 @@ from app.models.schemas import (
 from app.modules.retrieval import (
     search_similar,
     compute_confidence,
+    compute_confidence_batch,
     assess_confidence,
     log_refusal_event,
 )
@@ -157,13 +158,22 @@ async def chat(request: ChatRequest) -> ChatResponse:
         )
     
     # Compute confidence scores for each result
-    scored_results = [
-        (result, compute_confidence(result["score"]))
-        for result in retrieval_results
-    ]
+    # Use mode-aware confidence computation:
+    # - Retrieval-only: relative method (data-driven, no hard-coded assumptions)
+    # - Generation mode: sigmoid method (established baseline)
+    raw_scores = [result["score"] for result in retrieval_results]
+    
+    if settings.generation_enabled:
+        # Generation mode: use sigmoid transformation (established behavior)
+        confidence_scores = [compute_confidence(s, method="sigmoid") for s in raw_scores]
+    else:
+        # Retrieval-only mode: use relative method (more defensible across datasets)
+        confidence_scores = compute_confidence_batch(raw_scores, method="relative")
+    
+    # Pair results with their confidence scores
+    scored_results = list(zip(retrieval_results, confidence_scores))
     
     # Assess overall confidence (mode-aware)
-    confidence_scores = [conf for _, conf in scored_results]
     assessment = assess_confidence(
         scores=confidence_scores,
         confidence_threshold=settings.confidence_threshold,
@@ -174,11 +184,18 @@ async def chat(request: ChatRequest) -> ChatResponse:
     )
     
     # Build confidence info for response
+    # Include raw_top_score for diagnostics (highest raw FAISS similarity)
+    raw_top_score = raw_scores[0] if raw_scores else None
+    
     confidence_info = ConfidenceInfo(
         level=assessment.level.value,
         top_score=round(assessment.top_score, 4),
         mean_score=round(assessment.mean_score, 4),
         threshold=settings.confidence_threshold,
+        doc_top_score=round(assessment.doc_top_score, 4) if assessment.doc_top_score is not None else None,
+        lexical_match=assessment.lexical_match,
+        raw_top_score=round(raw_top_score, 4) if raw_top_score is not None else None,
+        entity_fact_lookup=assessment.entity_fact_lookup,
     )
     
     # Prepare sources (always include for transparency)

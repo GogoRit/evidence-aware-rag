@@ -10,6 +10,7 @@ from app.modules.retrieval.faiss_index import (
 )
 from app.modules.retrieval.scoring import (
     compute_confidence,
+    compute_confidence_batch,
     rerank_results,
     filter_by_threshold,
     assess_confidence,
@@ -26,6 +27,7 @@ __all__ = [
     "save_index",
     "rebuild_index",
     "compute_confidence",
+    "compute_confidence_batch",
     "rerank_results",
     "filter_by_threshold",
     "assess_confidence",
