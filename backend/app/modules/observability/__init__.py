@@ -3,7 +3,6 @@
 import logging
 
 import structlog
-from structlog.processors import JSONRenderer, TimeStamper, add_log_level
 
 # Map string log levels to Python logging constants
 LOG_LEVELS = {
@@ -17,6 +16,9 @@ LOG_LEVELS = {
 
 def setup_logging(log_level: str = "INFO") -> None:
     """Configure structured logging."""
+    # Import processors inside function to avoid import-time issues
+    from structlog.processors import TimeStamper
+    
     level = LOG_LEVELS.get(log_level.upper(), logging.INFO)
     
     structlog.configure(
@@ -51,6 +53,14 @@ from app.modules.observability.workspace_stats import (
     count_lines_in_file,
     count_documents_in_manifest,
 )
+from app.modules.observability.retrieval_metrics import (
+    RetrievalMetrics,
+    get_retrieval_metrics,
+    reset_retrieval_metrics,
+    record_retrieval_event,
+    log_retrieval_event,
+    get_metrics_summary,
+)
 
 __all__ = [
     "setup_logging",
@@ -64,4 +74,11 @@ __all__ = [
     "get_workspace_aggregate_stats",
     "count_lines_in_file",
     "count_documents_in_manifest",
+    # Retrieval metrics
+    "RetrievalMetrics",
+    "get_retrieval_metrics",
+    "reset_retrieval_metrics",
+    "record_retrieval_event",
+    "log_retrieval_event",
+    "get_metrics_summary",
 ]

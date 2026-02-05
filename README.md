@@ -126,6 +126,29 @@ Commit prefixes: `feat:`, `fix:`, `chore:`, `refactor:`, `test:`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
 
+## Stress Testing Retrieval
+
+Evaluate retrieval behavior under challenging document conditions (sparse, redundant, conflicting documents):
+
+```bash
+# 1. Seed the stress-test workspace with test documents
+python scripts/seed_stress_workspace.py
+
+# 2. Start backend + frontend (if not already running)
+make backend  # Terminal 1
+make frontend # Terminal 2
+
+# 3. Run the stress evaluation script
+python scripts/evaluate_retrieval_stress.py --workspace stress-test
+```
+
+The evaluation script tests three scenarios:
+- **Sparse documents** (1-2 chunks): Validates confidence with minimal evidence
+- **Redundant documents** (many duplicates): Tests document aggregation doesn't inflate confidence
+- **Conflicting documents** (contradictions): Validates retrieval handles conflicting evidence
+
+Each test reports confidence level, refusal decision, doc_hit_count, and score comparisons.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.

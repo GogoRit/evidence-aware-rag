@@ -25,6 +25,7 @@ from app.modules.generation import generate_response
 from app.modules.generation.router import make_routing_decision, RoutingMode
 from app.modules.observability.latency import track_latency
 from app.modules.observability.cost import estimate_cost
+from app.modules.observability.retrieval_metrics import log_retrieval_event
 
 router = APIRouter()
 logger = structlog.get_logger()
@@ -139,6 +140,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
         )
         log_refusal_event(request.workspace_id, request.query, empty_assessment)
         
+        # Log retrieval event for metrics (no results case)
+        log_retrieval_event(
+            workspace_id=request.workspace_id,
+            query=request.query,
+            confidence_level="insufficient",
+            refused=True,
+            doc_top_score=None,
+            chunk_top_score=0.0,
+            raw_top_score=None,
+            doc_hit_count=None,
+            lexical_match=False,
+            entity_fact_lookup=False,
+            num_sources=0,
+        )
+        
         return ChatResponse(
             answer=None,
             workspace_id=request.workspace_id,
@@ -187,6 +203,16 @@ async def chat(request: ChatRequest) -> ChatResponse:
     # Include raw_top_score for diagnostics (highest raw FAISS similarity)
     raw_top_score = raw_scores[0] if raw_scores else None
     
+    # Extract doc_hit_count from doc_summary if available
+    doc_hit_count = None
+    if assessment.doc_summary:
+        # Get hit_count from the best document (highest max_confidence)
+        max_hit_count = 0
+        for doc_info in assessment.doc_summary.values():
+            if isinstance(doc_info, dict):
+                max_hit_count = max(max_hit_count, doc_info.get("hit_count", 0))
+        doc_hit_count = max_hit_count if max_hit_count > 0 else None
+    
     confidence_info = ConfidenceInfo(
         level=assessment.level.value,
         top_score=round(assessment.top_score, 4),
@@ -196,6 +222,21 @@ async def chat(request: ChatRequest) -> ChatResponse:
         lexical_match=assessment.lexical_match,
         raw_top_score=round(raw_top_score, 4) if raw_top_score is not None else None,
         entity_fact_lookup=assessment.entity_fact_lookup,
+    )
+    
+    # Log retrieval event for metrics tracking
+    log_retrieval_event(
+        workspace_id=request.workspace_id,
+        query=request.query,
+        confidence_level=assessment.level.value,
+        refused=assessment.should_refuse,
+        doc_top_score=assessment.doc_top_score,
+        chunk_top_score=assessment.top_score,
+        raw_top_score=raw_top_score,
+        doc_hit_count=doc_hit_count,
+        lexical_match=assessment.lexical_match,
+        entity_fact_lookup=assessment.entity_fact_lookup,
+        num_sources=len(retrieval_results),
     )
     
     # Prepare sources (always include for transparency)
