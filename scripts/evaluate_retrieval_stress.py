@@ -164,6 +164,60 @@ TEST_SCENARIOS = {
             },
         ],
     },
+    
+    # -------------------------------------------------------------------------
+    # Scenario 4: LONG DOCUMENTS
+    # -------------------------------------------------------------------------
+    # Documents with extensive content (50-150 chunks). Tests whether retrieval
+    # and confidence scoring remain effective with large document collections.
+    # -------------------------------------------------------------------------
+    "long_doc": {
+        "description": (
+            "Long document scenario: Tests retrieval against documents with "
+            "extensive content (50-150 chunks). Validates that the system can "
+            "effectively retrieve relevant information from large documents and "
+            "that confidence scoring remains meaningful despite document size."
+        ),
+        "queries": [
+            {
+                "query": "What is the company's dress code policy?",
+                "reason": "Query targeting specific section in long document",
+                "expected_behavior": "Should retrieve relevant section; confidence should reflect relevance, not document length",
+            },
+            {
+                "query": "What are the remote work guidelines?",
+                "reason": "Another specific query in long document",
+                "expected_behavior": "Should find relevant section among many chunks",
+            },
+        ],
+    },
+    
+    # -------------------------------------------------------------------------
+    # Scenario 5: NEEDLE IN HAYSTACK
+    # -------------------------------------------------------------------------
+    # Documents where a single sentence contains the answer, buried in
+    # extensive unrelated content. Tests precision of retrieval.
+    # -------------------------------------------------------------------------
+    "needle_in_haystack": {
+        "description": (
+            "Needle in haystack scenario: Tests retrieval when the answer is "
+            "contained in a single sentence buried within extensive unrelated content. "
+            "Validates that the system can precisely locate specific information "
+            "even when it represents a small fraction of the total document."
+        ),
+        "queries": [
+            {
+                "query": "What is the emergency contact number for after-hours IT support?",
+                "reason": "Very specific query targeting a single sentence in a long document",
+                "expected_behavior": "Should retrieve the exact sentence containing the phone number",
+            },
+            {
+                "query": "What was the Q3 revenue total?",
+                "reason": "Specific numerical fact buried in financial report",
+                "expected_behavior": "Should find the specific revenue figure among extensive financial details",
+            },
+        ],
+    },
 }
 
 

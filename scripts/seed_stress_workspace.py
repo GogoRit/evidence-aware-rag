@@ -31,6 +31,8 @@ STRESS_DOCUMENTS = [
     "sparse_policy.txt",
     "redundant_policy.txt",
     "conflicting_policy.txt",
+    "long_doc.txt",
+    "needle_in_haystack.txt",
 ]
 
 

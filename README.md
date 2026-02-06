@@ -142,10 +142,12 @@ make frontend # Terminal 2
 python scripts/evaluate_retrieval_stress.py --workspace stress-test
 ```
 
-The evaluation script tests three scenarios:
+The evaluation script tests five scenarios:
 - **Sparse documents** (1-2 chunks): Validates confidence with minimal evidence
 - **Redundant documents** (many duplicates): Tests document aggregation doesn't inflate confidence
 - **Conflicting documents** (contradictions): Validates retrieval handles conflicting evidence
+- **Long documents** (50-150 chunks): Tests retrieval effectiveness with extensive content
+- **Needle in haystack** (single answer buried in unrelated text): Tests precision of retrieval for specific facts
 
 Each test reports confidence level, refusal decision, doc_hit_count, and score comparisons.
 
