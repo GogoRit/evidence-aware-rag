@@ -8,7 +8,7 @@
 #   make check     - Verify imports work before running
 
 SHELL := /bin/bash
-.PHONY: backend frontend check clean help check-python demo test lint
+.PHONY: backend frontend check clean help check-python demo test lint eval
 
 # Python interpreter - override with: make backend PYTHON=python3.11
 PYTHON ?= python3
@@ -25,6 +25,7 @@ help:
 	@echo "  make backend   - Create venv, install deps, run FastAPI on 0.0.0.0:8000"
 	@echo "  make frontend  - Create venv, install deps, run Streamlit on 0.0.0.0:8501"
 	@echo "  make demo      - Run E2E smoke demo (start backend first!)"
+	@echo "  make eval      - Seed stress workspace + run evaluator + golden set (backend must be running)"
 	@echo "  make test      - Run pytest test suite"
 	@echo "  make lint      - Run ruff linter"
 	@echo "  make check     - Verify backend imports work (no runtime crash)"
@@ -112,6 +113,22 @@ demo: backend-venv
 	@echo "(Make sure backend is running: make backend)"
 	@echo ""
 	cd $(BACKEND_DIR) && ./venv/bin/python ../scripts/demo_e2e.py
+
+# ============================================================
+# Evaluation (stress + golden)
+# ============================================================
+# Requires: backend running (make backend in another terminal).
+# Wipes stress-test workspace, reseeds, resets retrieval metrics, runs evaluator with golden set.
+# ============================================================
+
+eval: backend-venv
+	@echo "Running evaluation (seed + reset metrics + stress eval + golden)..."
+	@echo "REQUIRED: Backend must be running (make backend in another terminal)."
+	@echo ""
+	@rm -rf $(BACKEND_DIR)/data/workspaces/stress-test
+	$(BACKEND_DIR)/venv/bin/python scripts/seed_stress_workspace.py
+	@curl -s -X POST http://localhost:8000/metrics/retrieval/reset > /dev/null
+	$(BACKEND_DIR)/venv/bin/python scripts/evaluate_retrieval_stress.py --workspace stress-test --golden scripts/golden_eval.json
 
 # ============================================================
 # Testing & Linting
