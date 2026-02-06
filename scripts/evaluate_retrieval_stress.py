@@ -45,6 +45,7 @@ Setup Instructions:
 """
 
 import argparse
+import json
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -218,6 +219,82 @@ TEST_SCENARIOS = {
             },
         ],
     },
+    # -------------------------------------------------------------------------
+    # Scenario 6: ENTITY-FACT LOOKUP (guardrail)
+    # -------------------------------------------------------------------------
+    # Query that triggers entity_fact_lookup; should be refused when evidence
+    # is not present (no lexical match for CEO/ACME in stress docs).
+    # -------------------------------------------------------------------------
+    "entity_fact": {
+        "description": (
+            "Entity-fact lookup scenario: Query that matches entity-fact intent "
+            "(e.g. CEO of company). Should trigger entity_fact_lookup and be refused "
+            "when the fact is not present in the corpus."
+        ),
+        "queries": [
+            {
+                "query": "Who is the CEO of ACME?",
+                "reason": "Entity-fact lookup with no evidence in stress docs",
+                "expected_behavior": "Should trigger entity_fact_lookup and be refused (no lexical evidence)",
+            },
+        ],
+    },
+    # -------------------------------------------------------------------------
+    # Scenario 7: PARAPHRASE (synonyms / indirect wording)
+    # -------------------------------------------------------------------------
+    # Queries that rephrase long_doc / needle content with no direct lexical
+    # overlap. Goal: at least one lands LOW (not refused) to validate warning behavior.
+    # -------------------------------------------------------------------------
+    "paraphrase": {
+        "description": (
+            "Paraphrase scenario: Queries using synonyms and indirect wording "
+            "against long_doc and needle_in_haystack content. No direct lexical "
+            "overlap; validates semantic retrieval and that at least one query "
+            "lands LOW (warning) without refusal."
+        ),
+        "queries": [
+            {
+                "query": "What should staff wear to the office?",
+                "reason": "Paraphrase of dress code (long_doc); no 'dress code' wording",
+                "expected_behavior": "May land HIGH or LOW; semantic match to dress code section",
+            },
+            {
+                "query": "Who do I call when systems go down outside business hours?",
+                "reason": "Paraphrase of after-hours IT contact (needle); no 'emergency' or '1-800'",
+                "expected_behavior": "Should retrieve needle; may land LOW due to indirect wording",
+            },
+            {
+                "query": "How much did the company make in the third quarter?",
+                "reason": "Paraphrase of Q3 revenue (needle); no 'Q3' or 'revenue' lexical match",
+                "expected_behavior": "Semantic match to revenue figure; may land LOW or HIGH",
+            },
+        ],
+    },
+    # -------------------------------------------------------------------------
+    # Scenario 8: NEGATIVE CONTROL (not in corpus)
+    # -------------------------------------------------------------------------
+    # Queries that are NOT answered anywhere in the stress corpus; should be
+    # refused (INSUFFICIENT).
+    # -------------------------------------------------------------------------
+    "negative_control": {
+        "description": (
+            "Negative control scenario: Queries that are not answered anywhere "
+            "in the stress corpus. Validates that the system refuses with "
+            "INSUFFICIENT confidence rather than hallucinating or over-confiding."
+        ),
+        "queries": [
+            {
+                "query": "What is the company's policy on pet-friendly offices?",
+                "reason": "Topic not in handbook or any stress doc",
+                "expected_behavior": "Should be refused (INSUFFICIENT); no relevant content",
+            },
+            {
+                "query": "What was the Q2 revenue total?",
+                "reason": "Q2 revenue not stated; only Q3 is in needle_in_haystack",
+                "expected_behavior": "Should be refused (INSUFFICIENT); document has Q3 only",
+            },
+        ],
+    },
 }
 
 
@@ -306,34 +383,60 @@ def extract_stress_test_result(
 
 def _extract_doc_hit_count(response: dict[str, Any]) -> int | None:
     """
-    Extract doc_hit_count from response.
-    
-    This requires the doc_summary to be exposed in the response.
-    If not available, we estimate from sources.
+    Extract doc_hit_count from the chat response in all supported shapes.
+
+    Tries: confidence.doc_hit_count, router_decision.factors.doc_hit_count,
+    confidence.doc_summary hit_count, then derives from sources (count of
+    chunks from the best document = first source's document_id).
     """
-    # If doc_summary is exposed in confidence info (future enhancement)
-    confidence = response.get("confidence", {})
-    doc_summary = confidence.get("doc_summary")
-    if doc_summary and isinstance(doc_summary, dict):
-        # Return hit count of best document
-        max_count = 0
-        for doc_info in doc_summary.values():
-            if isinstance(doc_info, dict):
-                max_count = max(max_count, doc_info.get("hit_count", 0))
-        return max_count if max_count > 0 else None
-    
-    # Fallback: count sources (approximation)
-    sources = response.get("sources", [])
+    def _to_int(v: Any) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v if v >= 0 else None
+        if isinstance(v, (float, str)):
+            try:
+                n = int(float(v))
+                return n if n >= 0 else None
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    # 1) Top-level confidence (or nested under any key)
+    confidence = response.get("confidence")
+    if isinstance(confidence, dict):
+        hit = _to_int(confidence.get("doc_hit_count"))
+        if hit is not None:
+            return hit
+        doc_summary = confidence.get("doc_summary")
+        if isinstance(doc_summary, dict):
+            max_count = 0
+            for doc_info in doc_summary.values():
+                if isinstance(doc_info, dict):
+                    max_count = max(max_count, doc_info.get("hit_count", 0) or 0)
+            if max_count > 0:
+                return max_count
+
+    # 2) router_decision.factors (some APIs nest diagnostics there)
+    router = response.get("router_decision")
+    if isinstance(router, dict):
+        factors = router.get("factors") or {}
+        if isinstance(factors, dict):
+            hit = _to_int(factors.get("doc_hit_count"))
+            if hit is not None:
+                return hit
+
+    # 3) Derive from sources: count chunks from the best document (first source)
+    sources = response.get("sources") or []
     if sources:
-        # Group by document_id
-        doc_ids = set()
-        for source in sources:
-            doc_id = source.get("document_id", source.get("chunk_id", "")[:8])
-            doc_ids.add(doc_id)
-        # If all from same document, return source count
-        if len(doc_ids) == 1:
-            return len(sources)
-    
+        first_doc_id = sources[0].get("document_id") or (sources[0].get("chunk_id") or "")[:8]
+        if first_doc_id:
+            count = sum(
+                1 for s in sources
+                if (s.get("document_id") or (s.get("chunk_id") or "")[:8]) == first_doc_id
+            )
+            return count if count > 0 else None
+
     return None
 
 
@@ -392,17 +495,21 @@ def run_scenario(
     workspace: str,
     scenario_name: str,
     scenario: dict[str, Any],
+    debug_printed_failing: list[bool],
+    debug_printed_passing: list[bool],
     verbose: bool = False,
 ) -> list[StressTestResult]:
     """
     Run all queries in a scenario and collect results.
-    
+
     Args:
         workspace: Workspace to query
         scenario_name: Name of the scenario
         scenario: Scenario configuration
         verbose: Whether to print verbose output
-        
+        debug_printed_failing: Single-element list to track if we printed one failing case
+        debug_printed_passing: Single-element list to track if we printed one passing case
+
     Returns:
         List of StressTestResult for each query
     """
@@ -410,22 +517,39 @@ def run_scenario(
     print(f"  Scenario: {scenario_name.upper()}")
     print(f"{'=' * 80}")
     print(f"\n{scenario['description']}\n")
-    
+
     results = []
     for query_config in scenario["queries"]:
         query = query_config["query"]
-        
+
         if verbose:
             print(f"\n  [Running] {query}")
             print(f"  Reason: {query_config['reason']}")
             print(f"  Expected: {query_config['expected_behavior']}")
-        
+
         response = run_query(workspace, query)
         result = extract_stress_test_result(scenario_name, query, response)
         results.append(result)
-        
+
+        # Verbose only: print exact chat response for one failing and one passing DocHits case
+        if verbose and "error" not in response:
+            if result.doc_hit_count is None and not debug_printed_failing[0]:
+                debug_printed_failing[0] = True
+                print(f"\n  [DEBUG DocHits MISSING] scenario={scenario_name!r} query={query[:50]!r}...")
+                print("  Response keys:", list(response.keys()))
+                print("  confidence:", json.dumps(response.get("confidence"), indent=4))
+                if response.get("router_decision"):
+                    print("  router_decision.factors:", json.dumps(response.get("router_decision", {}).get("factors"), indent=4))
+            elif result.doc_hit_count is not None and not debug_printed_passing[0]:
+                debug_printed_passing[0] = True
+                print(f"\n  [DEBUG DocHits PRESENT] scenario={scenario_name!r} query={query[:50]!r}... doc_hit_count={result.doc_hit_count}")
+                print("  Response keys:", list(response.keys()))
+                print("  confidence:", json.dumps(response.get("confidence"), indent=4))
+                if response.get("router_decision"):
+                    print("  router_decision.factors:", json.dumps(response.get("router_decision", {}).get("factors"), indent=4))
+
         print_result(result, verbose)
-    
+
     return results
 
 
@@ -449,7 +573,7 @@ def print_summary(all_results: list[StressTestResult]) -> None:
     for scenario_name, results in scenarios.items():
         for result in results:
             query_short = result.query[:37] + "..." if len(result.query) > 40 else result.query
-            doc_hits = str(result.doc_hit_count) if result.doc_hit_count else "-"
+            doc_hits = str(result.doc_hit_count) if result.doc_hit_count is not None else "-"
             print(
                 f"{scenario_name:<12} "
                 f"{query_short:<40} "
@@ -473,6 +597,32 @@ def print_summary(all_results: list[StressTestResult]) -> None:
     print(f"  HIGH confidence: {high} ({high/total*100:.1f}%)")
     print(f"  LOW confidence: {low} ({low/total*100:.1f}%)")
     print(f"  INSUFFICIENT confidence: {insufficient} ({insufficient/total*100:.1f}%)")
+
+
+def validate_constraint_guardrail(all_results: list[StressTestResult]) -> None:
+    """
+    Assert constraint-coverage guardrail: Q2 revenue must be refused, Q3 revenue allowed.
+    Exits with non-zero if assertions fail.
+    """
+    q2_query = "What was the Q2 revenue total?"
+    q3_query = "What was the Q3 revenue total?"
+    q2_result = next((r for r in all_results if r.query.strip() == q2_query), None)
+    q3_result = next((r for r in all_results if r.query.strip() == q3_query), None)
+    failed = []
+    if q2_result is None:
+        failed.append(f"Q2 query not found in results: {q2_query!r}")
+    elif not q2_result.refused:
+        failed.append(f"Q2 must be refused (constraint not in corpus); got refused={q2_result.refused}")
+    if q3_result is None:
+        failed.append(f"Q3 query not found in results: {q3_query!r}")
+    elif q3_result.refused:
+        failed.append(f"Q3 must remain allowed (constraint in corpus); got refused={q3_result.refused}")
+    if failed:
+        print("\nConstraint guardrail validation FAILED:")
+        for msg in failed:
+            print(f"  - {msg}")
+        sys.exit(1)
+    print("\nConstraint guardrail: Q2 refused, Q3 allowed (PASS)")
 
 
 def main():
@@ -514,18 +664,30 @@ def main():
     # Run scenarios
     all_results = []
     scenarios_to_run = (
-        TEST_SCENARIOS.items() 
-        if args.scenario == "all" 
+        TEST_SCENARIOS.items()
+        if args.scenario == "all"
         else [(args.scenario, TEST_SCENARIOS[args.scenario])]
     )
-    
+    debug_printed_failing = [False]
+    debug_printed_passing = [False]
+
     for scenario_name, scenario in scenarios_to_run:
-        results = run_scenario(args.workspace, scenario_name, scenario, args.verbose)
+        results = run_scenario(
+            args.workspace,
+            scenario_name,
+            scenario,
+            debug_printed_failing,
+            debug_printed_passing,
+            args.verbose,
+        )
         all_results.extend(results)
     
     # Print summary
     print_summary(all_results)
-    
+
+    # Validate constraint-coverage guardrail (Q2 refused, Q3 allowed)
+    validate_constraint_guardrail(all_results)
+
     print(f"\n{'=' * 80}")
     print("  Evaluation Complete")
     print(f"{'=' * 80}\n")

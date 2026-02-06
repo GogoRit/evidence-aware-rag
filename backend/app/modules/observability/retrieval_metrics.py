@@ -70,6 +70,8 @@ class RetrievalMetrics:
         entity_fact_lookups: Number of queries classified as entity-fact lookups
         lexical_fallbacks: Number of times lexical match was used as fallback
         total_doc_hits: Sum of doc_hit_count across all queries (for averaging)
+        numeric_constraint_lookups: Number of queries with numeric/time-slice constraint intent
+        numeric_constraint_refusals: Number refused due to missing constraint in evidence
     """
     total_queries: int = 0
     refused_queries: int = 0
@@ -79,6 +81,8 @@ class RetrievalMetrics:
     entity_fact_lookups: int = 0
     entity_fact_refusals: int = 0
     lexical_fallbacks: int = 0
+    numeric_constraint_lookups: int = 0
+    numeric_constraint_refusals: int = 0
     total_doc_hits: int = 0
     
     # Internal lock for thread safety
@@ -125,7 +129,21 @@ class RetrievalMetrics:
         if self.total_queries == 0:
             return 0.0
         return self.lexical_fallbacks / self.total_queries
-    
+
+    @property
+    def numeric_constraint_lookup_rate(self) -> float:
+        """Percentage of queries with numeric/time-slice constraint intent."""
+        if self.total_queries == 0:
+            return 0.0
+        return self.numeric_constraint_lookups / self.total_queries
+
+    @property
+    def numeric_constraint_refusal_rate(self) -> float:
+        """Percentage of numeric constraint lookups that were refused."""
+        if self.numeric_constraint_lookups == 0:
+            return 0.0
+        return self.numeric_constraint_refusals / self.numeric_constraint_lookups
+
     @property
     def avg_doc_hit_count(self) -> float:
         """Average doc_hit_count per query."""
@@ -158,6 +176,10 @@ class RetrievalMetrics:
                 "entity_fact_refusals": self.entity_fact_refusals,
                 "lexical_fallbacks": self.lexical_fallbacks,
                 "lexical_fallback_rate": round(self.lexical_fallback_rate, 4),
+                "numeric_constraint_lookups": self.numeric_constraint_lookups,
+                "numeric_constraint_lookup_rate": round(self.numeric_constraint_lookup_rate, 4),
+                "numeric_constraint_refusals": self.numeric_constraint_refusals,
+                "numeric_constraint_refusal_rate": round(self.numeric_constraint_refusal_rate, 4),
             },
             "document_aggregation": {
                 "total_doc_hits": self.total_doc_hits,
@@ -196,6 +218,8 @@ def reset_retrieval_metrics() -> None:
         _metrics.entity_fact_lookups = 0
         _metrics.entity_fact_refusals = 0
         _metrics.lexical_fallbacks = 0
+        _metrics.numeric_constraint_lookups = 0
+        _metrics.numeric_constraint_refusals = 0
         _metrics.total_doc_hits = 0
     
     logger.info("Retrieval metrics reset")
@@ -206,26 +230,30 @@ def record_retrieval_event(
     refused: bool,
     entity_fact_lookup: bool = False,
     lexical_fallback: bool = False,
+    numeric_constraint_lookup: bool = False,
+    numeric_constraint_refused: bool = False,
     doc_hit_count: int = 0,
 ) -> None:
     """
     Record a retrieval event in the metrics counters.
-    
+
     Thread-safe operation that increments appropriate counters.
-    
+
     Args:
         confidence_level: "high", "low", or "insufficient"
         refused: Whether the query was refused
         entity_fact_lookup: Whether query was classified as entity-fact lookup
         lexical_fallback: Whether lexical match was used as fallback
+        numeric_constraint_lookup: Whether query had numeric/time-slice constraint intent
+        numeric_constraint_refused: Whether refused due to missing constraint in evidence
         doc_hit_count: Number of chunks from best matching document
     """
     with _metrics._lock:
         _metrics.total_queries += 1
-        
+
         if refused:
             _metrics.refused_queries += 1
-        
+
         level_lower = confidence_level.lower()
         if level_lower == "high":
             _metrics.high_confidence += 1
@@ -233,15 +261,20 @@ def record_retrieval_event(
             _metrics.low_confidence += 1
         elif level_lower == "insufficient":
             _metrics.insufficient_confidence += 1
-        
+
         if entity_fact_lookup:
             _metrics.entity_fact_lookups += 1
             if refused:
                 _metrics.entity_fact_refusals += 1
-        
+
         if lexical_fallback:
             _metrics.lexical_fallbacks += 1
-        
+
+        if numeric_constraint_lookup:
+            _metrics.numeric_constraint_lookups += 1
+            if numeric_constraint_refused:
+                _metrics.numeric_constraint_refusals += 1
+
         _metrics.total_doc_hits += doc_hit_count
 
 
@@ -256,6 +289,8 @@ def log_retrieval_event(
     doc_hit_count: int | None = None,
     lexical_match: bool = False,
     entity_fact_lookup: bool = False,
+    numeric_constraint_lookup: bool = False,
+    numeric_constraint_refused: bool = False,
     num_sources: int = 0,
 ) -> None:
     """
@@ -291,6 +326,8 @@ def log_retrieval_event(
         refused=refused,
         entity_fact_lookup=entity_fact_lookup,
         lexical_fallback=lexical_fallback,
+        numeric_constraint_lookup=numeric_constraint_lookup,
+        numeric_constraint_refused=numeric_constraint_refused,
         doc_hit_count=doc_hit_count or 0,
     )
     
@@ -320,6 +357,8 @@ def log_retrieval_event(
     log_data["lexical_match"] = lexical_match
     log_data["lexical_fallback"] = lexical_fallback
     log_data["entity_fact_lookup"] = entity_fact_lookup
+    log_data["numeric_constraint_lookup"] = numeric_constraint_lookup
+    log_data["numeric_constraint_refused"] = numeric_constraint_refused
     
     # Log at appropriate level
     if refused:

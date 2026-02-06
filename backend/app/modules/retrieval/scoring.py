@@ -55,6 +55,8 @@ class ConfidenceAssessment:
     doc_top_score: float | None = None  # Document-level aggregated confidence (retrieval-only)
     doc_summary: dict[str, dict] | None = None  # Per-document confidence breakdown
     entity_fact_lookup: bool = False  # True if query is an entity-fact lookup intent
+    numeric_constraint_lookup: bool = False  # True if numeric/time-slice intent detected
+    numeric_constraint_refused: bool = False  # True if refused due to missing constraint in evidence
 
 
 def extract_query_keywords(query: str) -> set[str]:
@@ -146,6 +148,75 @@ _ENTITY_FACT_REGEX = re.compile(
     "|".join(ENTITY_FACT_PATTERNS),
     re.IGNORECASE
 )
+
+# Numeric/time-slice constraint patterns (quarters, years, months, phone, dollar amounts)
+_QUARTER_ABBREV = re.compile(r"\bq([1-4])\b", re.IGNORECASE)
+_QUARTER_ORDINAL = re.compile(
+    r"\b(first|second|third|fourth)\s+quarter\b",
+    re.IGNORECASE
+)
+_ORDINAL_TO_Q = {"first": "q1", "second": "q2", "third": "q3", "fourth": "q4"}
+_YEAR = re.compile(r"\b(19|20)\d{2}\b")
+_PHONE = re.compile(r"\b1-\d{3}-\d{3}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b")
+# Intent: query mentions quarter (Q1-Q4 or ordinal), year, revenue, phone, or dollar amount
+_NUMERIC_INTENT = re.compile(
+    r"\bq[1-4]\b|"
+    r"\b(first|second|third|fourth)\s+quarter\b|"
+    r"\b(19|20)\d{2}\b|"
+    r"\brevenue\b|\bquarter\b|"
+    r"\b\d+(\.\d+)?\s*(million|billion|k|m)\b|"
+    r"\$\d+|"
+    r"1-\d{3}-\d{3}-\d{4}|\d{3}-\d{3}-\d{4}",
+    re.IGNORECASE
+)
+
+
+def extract_numeric_constraint_tokens(query: str) -> set[str]:
+    """
+    Extract constraint tokens from a query for numeric/time-slice guardrail.
+    Normalizes synonyms (e.g. Q2, second quarter -> q2). Returns empty set if
+    no numeric/time-slice constraints found.
+    """
+    if not query:
+        return set()
+    if not _NUMERIC_INTENT.search(query):
+        return set()
+    tokens = set()
+    q = query.lower()
+    # Quarter abbreviations: Q1..Q4 (regex + defensive substring for reliability)
+    for m in _QUARTER_ABBREV.finditer(query):
+        tokens.add("q" + m.group(1).lower())
+    for quarter in ("q1", "q2", "q3", "q4"):
+        if quarter in q:
+            tokens.add(quarter)
+    # Quarter ordinals: first/second/third/fourth quarter
+    for m in _QUARTER_ORDINAL.finditer(query):
+        ord_word = m.group(1).lower()
+        if ord_word in _ORDINAL_TO_Q:
+            tokens.add(_ORDINAL_TO_Q[ord_word])
+            tokens.add(m.group(0).lower())
+    # Years
+    for m in _YEAR.finditer(query):
+        tokens.add(m.group(0))
+    # Phone numbers
+    for m in _PHONE.finditer(query):
+        tokens.add(m.group(0))
+    return tokens
+
+
+def constraint_tokens_in_chunks(
+    constraint_tokens: set[str],
+    top_chunks: list[dict[str, Any]],
+    top_n: int = 5,
+) -> bool:
+    """Return True if any top chunk content contains at least one constraint token."""
+    if not constraint_tokens or not top_chunks:
+        return False
+    combined = " ".join(c.get("content", "") for c in top_chunks[:top_n]).lower()
+    for t in constraint_tokens:
+        if t.lower() in combined:
+            return True
+    return False
 
 
 def is_entity_fact_lookup(query: str) -> bool:
@@ -340,7 +411,10 @@ def assess_confidence(
     doc_summary = None
     lexical_match = False
     entity_fact_lookup = False
-    
+    numeric_constraint_lookup = False
+    numeric_constraint_refused = False
+    reason = None
+
     if generation_enabled:
         # Generation mode: use chunk-level confidence only
         primary_score = chunk_level_top
@@ -386,7 +460,10 @@ def assess_confidence(
             level = ConfidenceLevel.LOW
         else:
             level = ConfidenceLevel.INSUFFICIENT
-        
+
+        should_refuse = False
+        should_warn = False
+
         # Retrieval-only mode: production-defensible refusal logic
         # HIGH: allow, no warning (unless entity-fact lookup without evidence)
         # LOW: allow with warning (handles paraphrases, synonyms without lexical match)
@@ -417,51 +494,71 @@ def assess_confidence(
                 doc_score=round(primary_score, 4),
                 query_preview=query[:50] if query else "",
             )
-        elif level == ConfidenceLevel.HIGH:
-            should_refuse = False
-            should_warn = False
-        elif level == ConfidenceLevel.LOW:
-            # Normal LOW confidence: allow with warning
-            # This is production-defensible for paraphrases/synonyms
-            should_refuse = False
-            should_warn = True
-            logger.debug(
-                "LOW confidence - allowing with warning",
-                doc_score=round(primary_score, 4),
-                lexical_match=lexical_match,
-                entity_fact_lookup=entity_fact_lookup,
-                query_preview=query[:50] if query else "",
-            )
         else:
-            # INSUFFICIENT: refuse unless lexical evidence provides a safety net
-            if lexical_match:
-                # Lexical evidence found - allow but with low confidence
+            # Numeric/time-slice constraint guardrail: require constraint in evidence
+            constraint_tokens = extract_numeric_constraint_tokens(query) if query else set()
+            if constraint_tokens:
+                numeric_constraint_lookup = True
+                if not constraint_tokens_in_chunks(constraint_tokens, top_chunks):
+                    numeric_constraint_refused = True
+                    should_refuse = True
+                    should_warn = False
+                    level = ConfidenceLevel.INSUFFICIENT
+                    # Use first missing token for reason (e.g. "Q2")
+                    missing_display = next(iter(sorted(constraint_tokens))).upper()
+                    reason = f"Missing query constraint in evidence ({missing_display} not found)"
+                    logger.debug(
+                        "Numeric constraint refused - constraint not in top chunks",
+                        constraint_tokens=list(constraint_tokens),
+                        query_preview=query[:50] if query else "",
+                    )
+        if not should_refuse and not numeric_constraint_refused:
+            if level == ConfidenceLevel.HIGH:
+                should_refuse = False
+                should_warn = False
+            elif level == ConfidenceLevel.LOW:
+                # Normal LOW confidence: allow with warning
+                # This is production-defensible for paraphrases/synonyms
                 should_refuse = False
                 should_warn = True
-                # Boost primary_score to low threshold when lexical match found
-                primary_score = max(primary_score, low_threshold)
-                level = ConfidenceLevel.LOW
-                logger.info(
-                    "Lexical match boosted confidence",
-                    original_doc_score=round(doc_level_top, 4),
-                    boosted_score=round(primary_score, 4),
+                logger.debug(
+                    "LOW confidence - allowing with warning",
+                    doc_score=round(primary_score, 4),
+                    lexical_match=lexical_match,
+                    entity_fact_lookup=entity_fact_lookup,
                     query_preview=query[:50] if query else "",
                 )
             else:
-                # No lexical evidence and insufficient semantic match - refuse
-                should_refuse = True
-                should_warn = False
+                # INSUFFICIENT: refuse unless lexical evidence provides a safety net
+                if lexical_match:
+                    # Lexical evidence found - allow but with low confidence
+                    should_refuse = False
+                    should_warn = True
+                    # Boost primary_score to low threshold when lexical match found
+                    primary_score = max(primary_score, low_threshold)
+                    level = ConfidenceLevel.LOW
+                    logger.info(
+                        "Lexical match boosted confidence",
+                        original_doc_score=round(doc_level_top, 4),
+                        boosted_score=round(primary_score, 4),
+                        query_preview=query[:50] if query else "",
+                    )
+                else:
+                    # No lexical evidence and insufficient semantic match - refuse
+                    should_refuse = True
+                    should_warn = False
     
-    # Build reason string
-    reason = None
-    if should_refuse:
+    # Build reason string (may already be set by numeric constraint guardrail)
+    if should_refuse and reason is None:
         if entity_fact_lookup and not lexical_match:
             reason = "Entity-fact lookup requires explicit evidence in documents"
+        elif numeric_constraint_refused:
+            pass  # reason already set in guardrail block
         elif level == ConfidenceLevel.INSUFFICIENT:
             reason = f"Top confidence {primary_score:.2%} below refuse threshold {refuse_threshold:.2%}"
         else:
             reason = f"Top confidence {primary_score:.2%} below high threshold {high_threshold:.2%}"
-    elif should_warn:
+    elif should_warn and reason is None:
         reason = f"Top confidence {primary_score:.2%} is moderate (threshold: {high_threshold:.2%})"
     
     return ConfidenceAssessment(
@@ -475,6 +572,8 @@ def assess_confidence(
         doc_top_score=doc_top_score,
         doc_summary=doc_summary,
         entity_fact_lookup=entity_fact_lookup,
+        numeric_constraint_lookup=numeric_constraint_lookup,
+        numeric_constraint_refused=numeric_constraint_refused,
     )
 
 
