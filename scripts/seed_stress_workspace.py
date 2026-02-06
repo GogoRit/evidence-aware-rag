@@ -31,7 +31,14 @@ STRESS_DOCUMENTS = [
     "sparse_policy.txt",
     "redundant_policy.txt",
     "conflicting_policy.txt",
+    "long_doc.txt",
+    "needle_in_haystack.txt",
 ]
+
+# Documents that use token-based chunking with smaller chunks (stress long/needle scenarios)
+TOKEN_CHUNK_DOCS = {"long_doc.txt", "needle_in_haystack.txt"}
+TOKEN_CHUNK_SIZE = 120
+TOKEN_CHUNK_OVERLAP = 50
 
 
 def check_backend_health(base_url: str) -> bool:
@@ -47,34 +54,47 @@ def ingest_document(
     base_url: str,
     workspace_id: str,
     file_path: Path,
+    *,
+    chunk_strategy: str | None = None,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
 ) -> dict | None:
     """
     Ingest a document via the ingestion API.
-    
+
     Args:
         base_url: Base URL of the backend API
         workspace_id: Target workspace ID
         file_path: Path to the document file
-        
+        chunk_strategy: Optional chunking strategy (semantic, token, paragraph)
+        chunk_size: Optional chunk size (tokens or chars depending on strategy)
+        chunk_overlap: Optional chunk overlap
+
     Returns:
         Response JSON on success, None on failure
     """
     if not file_path.exists():
         print(f"  ERROR: File not found: {file_path}")
         return None
-    
+
     try:
         with open(file_path, "rb") as f:
             files = {"file": (file_path.name, f, "text/plain")}
             data = {"workspace_id": workspace_id}
-            
+            if chunk_strategy is not None:
+                data["chunk_strategy"] = chunk_strategy
+            if chunk_size is not None:
+                data["chunk_size"] = str(chunk_size)
+            if chunk_overlap is not None:
+                data["chunk_overlap"] = str(chunk_overlap)
+
             response = httpx.post(
                 f"{base_url}/ingest",
                 files=files,
                 data=data,
                 timeout=60.0,
             )
-            
+
             if response.status_code == 201:
                 return response.json()
             else:
@@ -123,14 +143,25 @@ def main():
         sys.exit(1)
     
     print(f"\nIngesting {len(STRESS_DOCUMENTS)} documents...\n")
-    
-    # Ingest each document
+
+    # Ingest each document (long_doc / needle_in_haystack use token chunking with smaller chunks)
     results = []
     for doc_name in STRESS_DOCUMENTS:
         doc_path = STRESS_DOCS_DIR / doc_name
         print(f"  [{doc_name}]", end=" ", flush=True)
-        
-        result = ingest_document(args.base_url, args.workspace, doc_path)
+
+        if doc_name in TOKEN_CHUNK_DOCS:
+            result = ingest_document(
+                args.base_url,
+                args.workspace,
+                doc_path,
+                chunk_strategy="token",
+                chunk_size=TOKEN_CHUNK_SIZE,
+                chunk_overlap=TOKEN_CHUNK_OVERLAP,
+            )
+        else:
+            result = ingest_document(args.base_url, args.workspace, doc_path)
+
         if result:
             chunks = result.get("chunks_created", 0)
             doc_id = result.get("document_id", "unknown")[:8]
@@ -139,21 +170,22 @@ def main():
         else:
             print("✗ Failed")
             results.append((doc_name, False, 0))
-    
-    # Summary
+
+    # Summary with per-document chunk counts
     print(f"\n{'=' * 80}")
     print("  Summary")
     print(f"{'=' * 80}\n")
-    
+
     success_count = sum(1 for _, success, _ in results if success)
-    total_chunks = sum(chunks for _, _, chunks in results)
-    
+    total_chunks = sum(c for _, _, c in results)
+
+    print("  Per-document chunk counts:")
     for doc_name, success, chunks in results:
         status = "✓" if success else "✗"
-        print(f"  {status} {doc_name:<30} {chunks} chunks")
+        print(f"    {status} {doc_name:<30} {chunks} chunks")
     
     print(f"\n  Total: {success_count}/{len(STRESS_DOCUMENTS)} documents ingested")
-    print(f"  Total chunks: {total_chunks}")
+    print(f"  Total chunks: {total_chunks}\n")
     
     if success_count == len(STRESS_DOCUMENTS):
         print(f"\n  ✓ Workspace '{args.workspace}' is ready for stress testing")

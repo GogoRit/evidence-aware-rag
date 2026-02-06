@@ -99,6 +99,7 @@ class ConfidenceInfo(BaseModel):
     mean_score: float
     threshold: float
     doc_top_score: float | None = None  # Document-level aggregated confidence (retrieval-only)
+    doc_hit_count: int | None = None  # Chunks from best matching document (for diagnostics)
     lexical_match: bool = False  # True if lexical fallback was used
     raw_top_score: float | None = None  # Raw FAISS similarity score (for diagnostics)
     entity_fact_lookup: bool = False  # True if query is an entity-fact lookup intent

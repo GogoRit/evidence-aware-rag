@@ -219,6 +219,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
         mean_score=round(assessment.mean_score, 4),
         threshold=settings.confidence_threshold,
         doc_top_score=round(assessment.doc_top_score, 4) if assessment.doc_top_score is not None else None,
+        doc_hit_count=doc_hit_count,
         lexical_match=assessment.lexical_match,
         raw_top_score=round(raw_top_score, 4) if raw_top_score is not None else None,
         entity_fact_lookup=assessment.entity_fact_lookup,
@@ -236,6 +237,8 @@ async def chat(request: ChatRequest) -> ChatResponse:
         doc_hit_count=doc_hit_count,
         lexical_match=assessment.lexical_match,
         entity_fact_lookup=assessment.entity_fact_lookup,
+        numeric_constraint_lookup=getattr(assessment, "numeric_constraint_lookup", False),
+        numeric_constraint_refused=getattr(assessment, "numeric_constraint_refused", False),
         num_sources=len(retrieval_results),
     )
     
@@ -265,8 +268,10 @@ async def chat(request: ChatRequest) -> ChatResponse:
             top_chunks=retrieval_results[:3],
         )
         
-        # Determine refusal message based on confidence level
-        if assessment.level.value == "insufficient":
+        # Determine refusal message (use assessment.reason when set, e.g. numeric constraint)
+        if assessment.reason:
+            refusal_reason = f"{settings.refusal_message} {assessment.reason}"
+        elif assessment.level.value == "insufficient":
             refusal_reason = f"{settings.refusal_message} The retrieved information has very low relevance (confidence: {assessment.top_score:.1%})."
         else:
             refusal_reason = f"{settings.refusal_message} However, here are the closest matches found (confidence: {assessment.top_score:.1%})."

@@ -128,7 +128,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full details.
 
 ## Stress Testing Retrieval
 
-Evaluate retrieval behavior under challenging document conditions (sparse, redundant, conflicting documents):
+Evaluate retrieval behavior under challenging document conditions:
 
 ```bash
 # 1. Seed the stress-test workspace with test documents
@@ -142,10 +142,15 @@ make frontend # Terminal 2
 python scripts/evaluate_retrieval_stress.py --workspace stress-test
 ```
 
-The evaluation script tests three scenarios:
+The evaluation script tests eight scenarios:
 - **Sparse documents** (1-2 chunks): Validates confidence with minimal evidence
 - **Redundant documents** (many duplicates): Tests document aggregation doesn't inflate confidence
 - **Conflicting documents** (contradictions): Validates retrieval handles conflicting evidence
+- **Long documents** (extensive content): Tests retrieval effectiveness with many chunks
+- **Needle in haystack** (single answer + distracting near-matches): Tests precision of retrieval for specific facts
+- **Entity-fact lookup** (CEO, etc.): Validates guardrail refuses when evidence is absent
+- **Paraphrase** (synonyms, indirect wording): Validates semantic retrieval; at least one query may land LOW (warning)
+- **Negative control** (not in corpus): Queries with no answer in docs; should be refused (INSUFFICIENT)
 
 Each test reports confidence level, refusal decision, doc_hit_count, and score comparisons.
 
