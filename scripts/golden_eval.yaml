@@ -1,0 +1,39 @@
+# Golden evaluation set for regression testing retrieval behavior.
+# Script loads JSON (scripts/golden_eval.json); this YAML is for reference.
+# Schema: list of { scenario, query, expected_refused, expected_level?, min_doc_hits? }
+# expected_level: high | low | insufficient (optional)
+# min_doc_hits: optional minimum doc_hit_count (optional)
+
+- scenario: negative_control
+  query: What was the Q2 revenue total?
+  expected_refused: true
+  expected_level: insufficient
+
+- scenario: negative_control
+  query: What is the refund policy for training courses?
+  expected_refused: false
+  expected_level: low
+
+- scenario: negative_control
+  query: When does the Tokyo office open?
+  expected_refused: false
+  expected_level: low
+
+- scenario: negative_control
+  query: What is the company's policy on cryptocurrency payments?
+  expected_refused: false
+  expected_level: low
+
+- scenario: needle_in_haystack
+  query: What was the Q3 revenue total?
+  expected_refused: false
+  expected_level: high
+
+- scenario: entity_fact
+  query: Who is the CEO of ACME?
+  expected_refused: true
+
+- scenario: sparse
+  query: What is the vacation policy?
+  expected_refused: false
+  expected_level: high

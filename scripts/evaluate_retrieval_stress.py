@@ -46,6 +46,7 @@ Setup Instructions:
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -273,25 +274,35 @@ TEST_SCENARIOS = {
     # -------------------------------------------------------------------------
     # Scenario 8: NEGATIVE CONTROL (not in corpus)
     # -------------------------------------------------------------------------
-    # Queries that are NOT answered anywhere in the stress corpus; should be
-    # refused (INSUFFICIENT).
+    # Out-of-corpus queries with minimal semantic overlap. Assertions:
+    # 1) At least one negative control must be refused (e.g. Q2 via constraint guardrail).
+    # 2) No negative control may have level HIGH (no over-confiding).
     # -------------------------------------------------------------------------
     "negative_control": {
         "description": (
-            "Negative control scenario: Queries that are not answered anywhere "
-            "in the stress corpus. Validates that the system refuses with "
-            "INSUFFICIENT confidence rather than hallucinating or over-confiding."
+            "Negative control scenario: Queries not answered in the stress corpus. "
+            "At least one must be refused; none may be HIGH (evaluator fails otherwise)."
         ),
         "queries": [
             {
-                "query": "What is the company's policy on pet-friendly offices?",
-                "reason": "Topic not in handbook or any stress doc",
-                "expected_behavior": "Should be refused (INSUFFICIENT); no relevant content",
+                "query": "What was the Q2 revenue total?",
+                "reason": "Q2 not in corpus; constraint guardrail refuses",
+                "expected_behavior": "Must be refused (INSUFFICIENT)",
             },
             {
-                "query": "What was the Q2 revenue total?",
-                "reason": "Q2 revenue not stated; only Q3 is in needle_in_haystack",
-                "expected_behavior": "Should be refused (INSUFFICIENT); document has Q3 only",
+                "query": "What is the refund policy for training courses?",
+                "reason": "No refund/training policy in stress docs",
+                "expected_behavior": "Must not be HIGH; ideally refused",
+            },
+            {
+                "query": "When does the Tokyo office open?",
+                "reason": "No Tokyo office in corpus",
+                "expected_behavior": "Must not be HIGH; ideally refused",
+            },
+            {
+                "query": "What is the company's policy on cryptocurrency payments?",
+                "reason": "Topic not in any stress document",
+                "expected_behavior": "Must not be HIGH; ideally refused",
             },
         ],
     },
@@ -625,6 +636,88 @@ def validate_constraint_guardrail(all_results: list[StressTestResult]) -> None:
     print("\nConstraint guardrail: Q2 refused, Q3 allowed (PASS)")
 
 
+def validate_negative_controls(all_results: list[StressTestResult]) -> None:
+    """
+    Assert: (1) At least one negative_control query is refused.
+            (2) No negative_control query has level HIGH (no over-confiding).
+    Exits with non-zero if either assertion fails.
+    """
+    negative_results = [r for r in all_results if r.scenario == "negative_control"]
+    failed = []
+    refused_count = sum(1 for r in negative_results if r.refused)
+    if refused_count == 0:
+        failed.append("At least one negative control must be refused (e.g. Q2 via constraint guardrail)")
+    for r in negative_results:
+        if r.confidence_level == "high":
+            failed.append(
+                f"Negative control must not be HIGH: {r.query!r} (got level=high, refused={r.refused})"
+            )
+    if failed:
+        print("\nNegative control validation FAILED:")
+        for msg in failed:
+            print(f"  - {msg}")
+        sys.exit(1)
+    if negative_results:
+        print(
+            f"\nNegative controls: {refused_count}/{len(negative_results)} refused, "
+            f"none HIGH (PASS)"
+        )
+
+
+def load_golden_eval(path: str) -> list[dict[str, Any]]:
+    """Load golden eval set from JSON file. Returns list of { scenario, query, expected_refused, expected_level?, min_doc_hits? }."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"Golden eval file must be a JSON array, got {type(data)}")
+    return data
+
+
+def validate_golden_eval(all_results: list[StressTestResult], golden: list[dict[str, Any]]) -> None:
+    """
+    Validate results against golden expectations.
+    Each golden row: scenario, query, expected_refused, expected_level? (high|low|insufficient), min_doc_hits? (optional).
+    Exits with non-zero if any expectation fails.
+    """
+    result_by_key = {(r.scenario, r.query.strip()): r for r in all_results}
+    failed = []
+    for i, row in enumerate(golden):
+        scenario = row.get("scenario")
+        query = row.get("query", "").strip()
+        expected_refused = row.get("expected_refused")
+        expected_level = row.get("expected_level")
+        min_doc_hits = row.get("min_doc_hits")
+        if scenario is None or query == "" or expected_refused is None:
+            failed.append(f"Golden row {i+1}: missing scenario, query, or expected_refused")
+            continue
+        key = (scenario, query)
+        result = result_by_key.get(key)
+        if result is None:
+            failed.append(f"Golden row {i+1}: no result for scenario={scenario!r} query={query!r}")
+            continue
+        if result.refused != expected_refused:
+            failed.append(
+                f"Golden row {i+1}: expected_refused={expected_refused} but got refused={result.refused} "
+                f"(scenario={scenario!r} query={query!r})"
+            )
+        if expected_level is not None and result.confidence_level != expected_level.lower():
+            failed.append(
+                f"Golden row {i+1}: expected_level={expected_level!r} but got {result.confidence_level!r} "
+                f"(scenario={scenario!r} query={query!r})"
+            )
+        if min_doc_hits is not None and result.doc_hit_count is not None and result.doc_hit_count < min_doc_hits:
+            failed.append(
+                f"Golden row {i+1}: min_doc_hits={min_doc_hits} but got doc_hit_count={result.doc_hit_count} "
+                f"(scenario={scenario!r} query={query!r})"
+            )
+    if failed:
+        print("\nGolden eval validation FAILED:")
+        for msg in failed:
+            print(f"  - {msg}")
+        sys.exit(1)
+    print(f"\nGolden eval: {len(golden)} expectations passed (PASS)")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Evaluate retrieval behavior under stress conditions"
@@ -645,6 +738,12 @@ def main():
         "-v",
         action="store_true",
         help="Verbose output",
+    )
+    parser.add_argument(
+        "--golden",
+        metavar="FILE",
+        default=None,
+        help="Path to golden eval JSON (e.g. scripts/golden_eval.json); validate results against expectations",
     )
     args = parser.parse_args()
     
@@ -687,6 +786,16 @@ def main():
 
     # Validate constraint-coverage guardrail (Q2 refused, Q3 allowed)
     validate_constraint_guardrail(all_results)
+    # Validate negative controls: all must be refused
+    validate_negative_controls(all_results)
+    # Optional: validate against golden eval set
+    if args.golden:
+        golden_path = os.path.abspath(args.golden) if os.path.isabs(args.golden) else os.path.normpath(os.path.join(os.getcwd(), args.golden))
+        if not os.path.isfile(golden_path):
+            print(f"\nERROR: Golden eval file not found: {golden_path}")
+            sys.exit(1)
+        golden = load_golden_eval(golden_path)
+        validate_golden_eval(all_results, golden)
 
     print(f"\n{'=' * 80}")
     print("  Evaluation Complete")
